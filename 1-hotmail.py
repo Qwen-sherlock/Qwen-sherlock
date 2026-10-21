@@ -1228,11 +1228,14 @@ def get_banned_users():
         return []
 
 def api_pref(user_id):
+    """-1 = tum APIler, 0..n = secili API index."""
     try:
         v = db_get(user_id, "api_pref")
-        return v if v is not None else 0
-    except:
-        return 0
+        if v is None:
+            return -1
+        return int(v)
+    except Exception:
+        return -1
 
 # ══════════════════════════════════════════════════════════════
 
@@ -2744,7 +2747,7 @@ S = {
         "welcome": "<b>🕵🏻 Cyber Search</b>\nHoşgeldin, <b>{name}</b>!\n📌 Durum: {status}\n🔻 Aşağıdan işlem seç:",
         "free": "🆓 Ücretsiz", "premium": "⭐ PREMIUM",
         "select_op": "🛠 Kullanmak istediğin aracı seç:",
-        "combo_ask": "🌐 Domain gir (Örn: netflix.com) veya (netflix.com 100):",
+        "combo_ask": "📦 <b>COMBO ÇEK</b>",
         "searching": "🔍 <b>{domain}</b> taranıyor...",
         "no_result": "❌ {domain} için sonuç bulunamadı.",
         "combo_caption": "✅ <b>{domain}</b> | <b>{count}</b> Hesap\nAPI: {apis}",
@@ -6912,15 +6915,28 @@ def register_handlers(bot_instance):
         if txt == _mk("combo") or txt.endswith("Combo Çek") or txt.endswith("Combo Check"):
             free_left = max(0, COMBO_FREE_LIMIT - combo_get_free_used(uid))
             bal = combo_get_balance(uid)
-            ask = s(uid, "combo_ask")
+            pref = api_pref(uid)
+            if pref < 0:
+                api_name = "Tüm API'ler"
+            elif 0 <= pref < len(API_LIST):
+                api_name = API_LIST[pref]["name"]
+            else:
+                api_name = "Tüm API'ler"
             info = (
-                str(ask) + "\n"
+                "📦 <b>COMBO ÇEK</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n"
+                "🌐 Domain yaz:\n"
+                "• <code>netflix.com</code>\n"
+                "• <code>netflix.com 100</code> (satır limiti)\n\n"
+                + f"🔌 API: <b>{api_name}</b>\n"
+                + f"🆓 Free: <b>{free_left}</b>/{COMBO_FREE_LIMIT}  (max {COMBO_FREE_MAX_LINES} satır)\n"
+                + f"💰 Bakiye: <b>{bal}</b>\n"
                 + "━━━━━━━━━━━━━━━━━━━━━\n"
-                + f"🆓 Free: <b>{free_left}</b>/{COMBO_FREE_LIMIT}  |  💰 Bakiye: <b>{bal}</b>\n"
-                + f"💎 Paket: 10→{COMBO_PRICE_10}⭐ · 25→{COMBO_PRICE_25}⭐ · 50→{COMBO_PRICE_50}⭐ · 100→{COMBO_PRICE_100}⭐"
+                + f"💎 10→{COMBO_PRICE_10}⭐ · 25→{COMBO_PRICE_25}⭐ · 50→{COMBO_PRICE_50}⭐ · 100→{COMBO_PRICE_100}⭐"
             )
             mk = InlineKeyboardMarkup(row_width=1)
             mk.add(_btn("💎 Paket Satın Al", "combo_packages", "success"))
+            mk.add(_btn("⚙️ API Değiştir", "combo_api_menu", "primary"))
             m = bot_instance.reply_to(msg, info, reply_markup=mk, parse_mode="HTML")
             register_step(bot_instance, m, lambda m: _process_combo(m, bot_instance))
         elif txt == _mk("tools") or "Araçlar" in txt or "Araclar" in txt or "Tools" in txt or "الأدوات" in txt or "araç" in txt.lower():
@@ -8139,6 +8155,47 @@ def register_handlers(bot_instance):
                 _handle_admin_cb(call, data[4:], bot_instance)
                 return
             
+            
+            if data == "combo_api_menu":
+                try:
+                    bot_instance.answer_callback_query(call.id)
+                except Exception:
+                    pass
+                _show_api_menu(call.message.chat.id, uid, bot_instance,
+                               edit=(call.message.chat.id, call.message.message_id))
+                return
+
+            if data == "combo_start_from_api":
+                try:
+                    bot_instance.answer_callback_query(call.id)
+                except Exception:
+                    pass
+                free_left = max(0, COMBO_FREE_LIMIT - combo_get_free_used(uid))
+                bal = combo_get_balance(uid)
+                pref = api_pref(uid)
+                if pref < 0:
+                    api_name = "Tüm API'ler"
+                elif 0 <= pref < len(API_LIST):
+                    api_name = API_LIST[pref]["name"]
+                else:
+                    api_name = "Tüm API'ler"
+                info = (
+                    "📦 <b>COMBO ÇEK</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "🌐 Domain yaz:\n"
+                    "• <code>netflix.com</code>\n"
+                    "• <code>netflix.com 100</code>\n\n"
+                    + f"🔌 API: <b>{api_name}</b>\n"
+                    + f"🆓 Free: <b>{free_left}</b>/{COMBO_FREE_LIMIT} (max {COMBO_FREE_MAX_LINES} satır)\n"
+                    + f"💰 Bakiye: <b>{bal}</b>"
+                )
+                mk = InlineKeyboardMarkup(row_width=1)
+                mk.add(_btn("💎 Paket Satın Al", "combo_packages", "success"))
+                mk.add(_btn("⚙️ API Değiştir", "combo_api_menu", "primary"))
+                m = bot_instance.send_message(call.message.chat.id, info, reply_markup=mk, parse_mode="HTML")
+                register_step(bot_instance, m, lambda m: _process_combo(m, bot_instance))
+                return
+
             if data == "combo_packages":
                 try:
                     bot_instance.answer_callback_query(call.id)
@@ -8199,8 +8256,8 @@ def register_handlers(bot_instance):
             if data.startswith("setapi_"):
                 val = data[7:]
                 if val == "default":
-                    db_set(uid, "api_pref", 0)
-                    try: bot_instance.answer_callback_query(call.id, "✅ Varsayılan API")
+                    db_set(uid, "api_pref", -1)
+                    try: bot_instance.answer_callback_query(call.id, "✅ Tüm API'ler")
                     except: pass
                 else:
                     idx = int(val); db_set(uid, "api_pref", idx)
@@ -8665,18 +8722,39 @@ def _show_leaderboard(chat_id, uid, bot_instance):
 
 def _show_api_menu(chat_id, uid, bot_instance, edit=None):
     cur = api_pref(uid)
-    cur_name = API_LIST[cur]["name"] if cur < len(API_LIST) else "Varsayılan"
-    txt = s(uid, "api_title", cur=cur_name)
+    if cur is None or cur < 0:
+        cur_name = "Tüm API'ler (birleşik)"
+        cur = -1
+    elif 0 <= cur < len(API_LIST):
+        cur_name = API_LIST[cur]["name"]
+    else:
+        cur_name = "Tüm API'ler (birleşik)"
+        cur = -1
+    txt = (
+        "⚙️ <b>COMBO API SEÇİMİ</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        + f"📌 Aktif: <b>{cur_name}</b>\n\n"
+        + "Combo çekerken hangi kaynaktan aransın?\n"
+        + "• Tek API → sadece o kaynak\n"
+        + "• Tüm API'ler → hepsini birleştirir"
+    )
     mk = InlineKeyboardMarkup(row_width=1)
+    ico_all = "✅" if cur < 0 else "◻️"
+    mk.add(_btn(f"{ico_all} Tüm API'ler (birleşik)", "setapi_default", "success" if cur < 0 else "primary"))
     for i, api in enumerate(API_LIST):
         ico = "✅" if i == cur else "◻️"
-        mk.add(_btn(f"{ico} {api['name']}", f"setapi_{i}"))
-    mk.add(_btn("🔄 Varsayılan", "setapi_default"))
-    mk.add(_btn(s(uid, "home_btn"), "goto_home"))
+        style = "success" if i == cur else "primary"
+        mk.add(_btn(f"{ico} {api['name']}", f"setapi_{i}", style))
+    mk.add(_btn("📦 Combo Çek", "combo_start_from_api", "success"))
+    mk.add(_btn("🏠 Ana Menü", "goto_home", "danger"))
     if edit:
-        try: bot_instance.edit_message_text(txt, edit[0], edit[1], reply_markup=mk); return
-        except: pass
-    bot_instance.send_message(chat_id, txt, reply_markup=mk)
+        try:
+            bot_instance.edit_message_text(txt, edit[0], edit[1], reply_markup=mk, parse_mode="HTML")
+            return
+        except Exception:
+            pass
+    bot_instance.send_message(chat_id, txt, reply_markup=mk, parse_mode="HTML")
+
 
 def _show_help(chat_id, uid, bot_instance):
     status = "⭐ PREMIUM" if is_premium(uid) else "🆓 Ücretsiz"
@@ -8820,7 +8898,7 @@ def _process_combo(msg, bot_instance):
     except Exception:
         sm = bot_instance.reply_to(msg, f"🔍 {domain} aranıyor...")
     try:
-        combos, err, apis = _combo_engine(domain, limit)
+        combos, err, apis = _combo_engine(domain, limit, user_id=uid)
         if err:
             try:
                 bot_instance.edit_message_text(f"❌ {err}", msg.chat.id, sm.message_id)
@@ -8874,36 +8952,66 @@ def _process_combo(msg, bot_instance):
             bot_instance.send_message(msg.chat.id, f"❌ Combo hatası: {e}")
 
 
-def _combo_engine(domain, limit=None):
+def _combo_engine(domain, limit=None, user_id=None):
     for bad in YASAKLI:
-        if bad in domain.lower(): return None, f"Yasaklı domain: {bad}", None
-    combos = []; apis = []
+        if bad in domain.lower():
+            return None, f"Yasaklı domain: {bad}", None
+    combos = []
+    apis = []
+
     def _extract(line):
         line = str(line)
         m = re.search(r"://[^/]+/[^:]*:(.+?):(.+)$", line)
-        if m: return m.group(1).strip(), m.group(2).strip()
+        if m:
+            return m.group(1).strip(), m.group(2).strip()
         parts = line.split(":")
-        if len(parts) >= 2: return parts[-2].strip(), parts[-1].strip()
+        if len(parts) >= 2:
+            return parts[-2].strip(), parts[-1].strip()
         return None, None
-    for api in API_LIST:
-        try:
-            r = requests.get(api["url"] + domain, headers={"User-Agent":"Mozilla/5.0"}, timeout=10, verify=False)
-            if r.status_code != 200: continue
-            data = r.json(); lines = []
-            if api["type"] == "wazely": lines = data.get("foundLines", [])
-            elif api["type"] == "solidar": lines = data.get("sonuclar", [])
-            elif api["type"] == "rootturkey":
-                raw = data.get("data","") if isinstance(data, dict) else r.text
-                lines = raw.split("\n")
-            for l in lines:
-                u, p = _extract(l)
-                if u and p: combos.append(f"{u}:{p}")
-            apis.append(api["name"])
-        except: pass
-    uniq = list(set(combos))
-    if limit: uniq = uniq[:limit]
-    return uniq, None, " + ".join(apis)
 
+    # Secili API veya tumu
+    pref = api_pref(user_id) if user_id is not None else -1
+    if pref is not None and pref >= 0 and pref < len(API_LIST):
+        selected = [API_LIST[pref]]
+    else:
+        selected = list(API_LIST)
+
+    for api in selected:
+        try:
+            r = requests.get(
+                api["url"] + domain,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=12,
+                verify=False,
+            )
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            lines = []
+            if api["type"] == "wazely":
+                lines = data.get("foundLines", []) or data.get("loglar", []) or []
+            elif api["type"] == "solidar":
+                lines = data.get("sonuclar", []) or data.get("loglar", []) or []
+            elif api["type"] == "rootturkey":
+                raw = data.get("data", "") if isinstance(data, dict) else r.text
+                lines = raw.split("\n") if isinstance(raw, str) else (raw or [])
+            else:
+                if isinstance(data, dict):
+                    lines = data.get("loglar") or data.get("foundLines") or data.get("sonuclar") or []
+                elif isinstance(data, list):
+                    lines = data
+            for l in lines:
+                u, pw = _extract(l)
+                if u and pw:
+                    combos.append(f"{u}:{pw}")
+            apis.append(api["name"])
+        except Exception as e:
+            print(f"[COMBO API] {api.get("name")}: {e}")
+            pass
+    uniq = list(dict.fromkeys(combos))  # sirali unique
+    if limit is not None:
+        uniq = uniq[: int(limit)]
+    return uniq, None, " + ".join(apis) if apis else None
 
 
 def _ai_clean_branding(text):
