@@ -8891,8 +8891,11 @@ def _process_combo(msg, bot_instance):
     txt = raw.split()
     domain = txt[0].replace("http://", "").replace("https://", "").split("/")[0].strip()
     limit = int(txt[1]) if len(txt) > 1 and txt[1].isdigit() else None
-    if source == "free" and (limit is None or limit > COMBO_FREE_MAX_LINES):
-        limit = COMBO_FREE_MAX_LINES
+    # Free: max 100 satir | Bakiye/Admin: sinirsiz (kullanici limit yazmazsa None)
+    if source == "free":
+        if limit is None or limit > COMBO_FREE_MAX_LINES:
+            limit = COMBO_FREE_MAX_LINES
+    # balance / admin: limit sadece kullanici yazdiysa uygulanir, yoksa sinirsiz
     try:
         sm = bot_instance.reply_to(msg, s(uid, "searching", domain=domain))
     except Exception:
@@ -9006,7 +9009,7 @@ def _combo_engine(domain, limit=None, user_id=None):
                     combos.append(f"{u}:{pw}")
             apis.append(api["name"])
         except Exception as e:
-            print(f"[COMBO API] {api.get("name")}: {e}")
+            print(f"[COMBO API] {api.get('name')}: {e}")
             pass
     uniq = list(dict.fromkeys(combos))  # sirali unique
     if limit is not None:
