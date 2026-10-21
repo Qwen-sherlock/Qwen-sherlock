@@ -587,35 +587,75 @@ def enforce_ban(user_id):
         return False
     return is_banned(user_id)
 
+_VERIFIED_CACHE = set()
+_CAPTCHA_PENDING = {}
+
 def is_verified(user_id):
-    """Captcha / buton dogrulama. Admin her zaman verified."""
+    """Captcha dogrulama. Admin her zaman verified."""
     if user_id == ADMIN_ID:
         return True
+    if user_id in _VERIFIED_CACHE:
+        return True
     try:
-        return _as_int_flag(db_get(user_id, "is_verified"))
+        ok = _as_int_flag(db_get(user_id, "is_verified"))
+        if ok:
+            _VERIFIED_CACHE.add(user_id)
+        return ok
     except Exception:
         return False
 
 def set_verified(user_id, val=1):
     try:
-        add_user(user_id)
+        add_user(user_id, "", "")
         db_set(user_id, "is_verified", 1 if val else 0)
+        if val:
+            _VERIFIED_CACHE.add(user_id)
+            _CAPTCHA_PENDING.pop(user_id, None)
+        else:
+            _VERIFIED_CACHE.discard(user_id)
     except Exception as e:
         print(f"[VERIFY] {e}")
+        if val:
+            _VERIFIED_CACHE.add(user_id)
+
+def captcha_new_challenge(user_id):
+    import random
+    a = random.randint(2, 12)
+    b = random.randint(2, 12)
+    _CAPTCHA_PENDING[user_id] = {"a": a, "b": b, "ans": a + b, "ts": time.time()}
+    return a, b
 
 def captcha_kb():
     mk = InlineKeyboardMarkup(row_width=1)
-    mk.add(_btn("✅ Ben robot değilim", "captcha_verify", "success"))
+    mk.add(_btn("🔄 Yeni soru", "captcha_refresh", "primary"))
     return mk
 
-def captcha_required_message():
+def captcha_required_message(user_id=None):
+    if user_id is not None:
+        a, b = captcha_new_challenge(user_id)
+    else:
+        a, b = 3, 4
     return (
         "🛡️ <b>Doğrulama gerekli</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "Botu kullanmadan önce doğrula.\n\n"
-        "Aşağıdaki butona bas:\n"
-        "<b>Ben robot değilim</b>"
+        "Botu kullanmadan önce robot olmadığını kanıtla.\n\n"
+        f"🧮 Soru: <b>{a} + {b} = ?</b>\n\n"
+        "Cevabı <b>sadece sayı</b> olarak yaz."
     )
+
+def captcha_check_answer(user_id, text):
+    st = _CAPTCHA_PENDING.get(user_id)
+    if not st:
+        return False
+    try:
+        val = int(str(text).strip().replace(" ", ""))
+    except Exception:
+        return False
+    if val == int(st.get("ans", -1)):
+        set_verified(user_id, 1)
+        return True
+    return False
+
 
 def get_ban_reason(user_id):
     try:
@@ -6448,9 +6488,24 @@ def register_handlers(bot_instance):
         if not is_verified(uid):
             bot_instance.reply_to(
                 msg,
-                captcha_required_message(),
+                captcha_required_message(uid),
                 reply_markup=captcha_kb(),
                 parse_mode="HTML"
+            )
+            return
+        # dil daha once secildiyse ana menu
+        try:
+            cur_lang = db_get(uid, "language") or ""
+        except Exception:
+            cur_lang = ""
+        if cur_lang in ("tr", "en", "ar"):
+            name = html.escape(msg.from_user.first_name or "User")
+            status = "⭐ PREMIUM" if is_premium(uid) else "🆓 Ücretsiz"
+            bot_instance.reply_to(
+                msg,
+                s(uid, "welcome", name=name, status=status),
+                parse_mode="HTML",
+                reply_markup=main_kb(uid),
             )
             return
         mk = InlineKeyboardMarkup(row_width=3)
@@ -6884,8 +6939,31 @@ def register_handlers(bot_instance):
             bot_instance.reply_to(msg, ban_block_message(uid), parse_mode="HTML")
             return
         if not is_verified(uid):
+            txt_ans = (msg.text or "").strip()
+            if uid in _CAPTCHA_PENDING and txt_ans.lstrip("-").isdigit():
+                if captcha_check_answer(uid, txt_ans):
+                    bot_instance.reply_to(
+                        msg,
+                        "✅ <b>Doğrulama başarılı!</b>\n\nDil seçerek devam et:",
+                        parse_mode="HTML",
+                    )
+                    mk = InlineKeyboardMarkup(row_width=3)
+                    mk.add(
+                        _btn("🇹🇷 Türkçe", "lang_tr"),
+                        _btn("🇬🇧 English", "lang_en"),
+                        _btn("🇸🇦 العربية", "lang_ar"),
+                    )
+                    bot_instance.send_message(msg.chat.id, s(uid, "lang_pick"), reply_markup=mk)
+                    return
+                bot_instance.reply_to(
+                    msg,
+                    "❌ Yanlış cevap. Tekrar dene.\n\n" + captcha_required_message(uid),
+                    reply_markup=captcha_kb(),
+                    parse_mode="HTML",
+                )
+                return
             bot_instance.reply_to(
-                msg, captcha_required_message(),
+                msg, captcha_required_message(uid),
                 reply_markup=captcha_kb(), parse_mode="HTML"
             )
             return
@@ -6995,27 +7073,29 @@ def register_handlers(bot_instance):
                 return
 
             # ── CAPTCHA ──
-            if data == "captcha_verify":
-                set_verified(uid, 1)
-                _ack("✅ Doğrulandı!")
+            if data in ("captcha_verify", "captcha_refresh"):
+                _ack()
                 try:
                     bot_instance.edit_message_text(
-                        "✅ <b>Doğrulama başarılı!</b>\n\nDil seçerek devam et:",
-                        cid, mid, parse_mode="HTML"
+                        captcha_required_message(uid),
+                        cid, mid, reply_markup=captcha_kb(), parse_mode="HTML",
                     )
                 except Exception:
-                    pass
-                mk = InlineKeyboardMarkup(row_width=3)
-                mk.add(_btn("🇹🇷 Türkçe","lang_tr"), _btn("🇬🇧 English","lang_en"), _btn("🇸🇦 العربية","lang_ar"))
-                bot_instance.send_message(cid, s(uid, "lang_pick"), reply_markup=mk)
+                    try:
+                        bot_instance.send_message(
+                            cid, captcha_required_message(uid),
+                            reply_markup=captcha_kb(), parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
                 return
 
-            if not is_verified(uid) and data not in ("captcha_verify",):
-                _ack("Önce doğrulama yap!", alert=True)
+            if not is_verified(uid) and not str(data).startswith("lang_"):
+                _ack("Önce doğrulama yap! Matematik sorusunu cevapla.", alert=True)
                 try:
                     bot_instance.send_message(
-                        cid, captcha_required_message(),
-                        reply_markup=captcha_kb(), parse_mode="HTML"
+                        cid, captcha_required_message(uid),
+                        reply_markup=captcha_kb(), parse_mode="HTML",
                     )
                 except Exception:
                     pass
@@ -7032,14 +7112,17 @@ def register_handlers(bot_instance):
 
             # ── DIL SECIMI ──
             if data.startswith("lang_"):
+                set_verified(uid, 1)
                 l = data.replace("lang_", "", 1)
                 if l not in ("tr", "en", "ar"):
                     l = "tr"
                 try:
                     add_user(uid, call.from_user.username or "", call.from_user.first_name or "")
                     db_set(uid, "language", l)
+                    set_verified(uid, 1)
                 except Exception as e:
                     print(f"[LANG DB] {e}")
+                    set_verified(uid, 1)
                 _ack("✅")
                 name = html.escape(call.from_user.first_name or "User")
                 status = "⭐ PREMIUM" if is_premium(uid) else "🆓 Ücretsiz"
