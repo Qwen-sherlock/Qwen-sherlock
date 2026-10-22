@@ -115,6 +115,15 @@ LOG_AUTH = "@gaynotcu"
 # Yeni Log API (oncelikli)
 LOG_API_NEW = "https://logcuyum.pythonanywhere.com/log/site?site="
 
+
+# ── Vesika Sorgu (sadece yildiz, free yok) ──
+VESIKA_PACKAGE_5 = 5
+VESIKA_PACKAGE_15 = 15
+VESIKA_PACKAGE_30 = 30
+VESIKA_PRICE_5 = 99
+VESIKA_PRICE_15 = 249
+VESIKA_PRICE_30 = 449
+
 # ── Combo Çekme (bakiye) ──
 COMBO_FREE_LIMIT = 2
 COMBO_FREE_MAX_LINES = 100
@@ -356,6 +365,9 @@ def db_init():
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, username TEXT,
         target TEXT, status TEXT, detail TEXT, date TEXT)''')
 
+
+    c.execute("CREATE TABLE IF NOT EXISTS vesika_users (user_id INTEGER PRIMARY KEY, query_balance INTEGER DEFAULT 0, total_queries INTEGER DEFAULT 0)")
+    c.execute("CREATE TABLE IF NOT EXISTS vesika_purchases (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, username TEXT, package TEXT, queries INTEGER, stars INTEGER, date TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS combo_users (user_id INTEGER PRIMARY KEY, free_used INTEGER DEFAULT 0, query_balance INTEGER DEFAULT 0, total_queries INTEGER DEFAULT 0)")
     c.execute("CREATE TABLE IF NOT EXISTS combo_purchases (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, username TEXT, package TEXT, queries INTEGER, stars INTEGER, date TEXT)")
     c.execute('''CREATE TABLE IF NOT EXISTS referrals (
@@ -3681,6 +3693,79 @@ TOOL_PROMPTS = {
 }
 
 
+
+def vesika_init_user(user_id):
+    try:
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO vesika_users (user_id) VALUES (?)", (user_id,))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
+def vesika_get_balance(user_id):
+    try:
+        vesika_init_user(user_id)
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("SELECT query_balance FROM vesika_users WHERE user_id=?", (user_id,))
+        r = c.fetchone(); conn.close()
+        return (r[0] if r else 0) or 0
+    except Exception:
+        return 0
+
+def vesika_set_balance(user_id, val):
+    try:
+        vesika_init_user(user_id)
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("UPDATE vesika_users SET query_balance=? WHERE user_id=?", (int(val), user_id))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
+def vesika_add_balance(user_id, amount):
+    vesika_set_balance(user_id, vesika_get_balance(user_id) + int(amount))
+
+def vesika_use_query(user_id):
+    if user_id == ADMIN_ID:
+        return True
+    bal = vesika_get_balance(user_id)
+    if bal <= 0:
+        return False
+    vesika_set_balance(user_id, bal - 1)
+    try:
+        conn = sqlite3.connect(DB_PATH); c = conn.cursor()
+        c.execute("UPDATE vesika_users SET total_queries=COALESCE(total_queries,0)+1 WHERE user_id=?", (user_id,))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+    return True
+
+def vesika_can_query(user_id):
+    if user_id == ADMIN_ID:
+        return True
+    return vesika_get_balance(user_id) > 0
+
+def vesika_packages_kb():
+    mk = InlineKeyboardMarkup(row_width=1)
+    mk.add(_btn(f"🪪 {VESIKA_PACKAGE_5} Vesika — {VESIKA_PRICE_5} ⭐", "vesika_buy_5", "primary"))
+    mk.add(_btn(f"🪪 {VESIKA_PACKAGE_15} Vesika — {VESIKA_PRICE_15} ⭐", "vesika_buy_15", "success"))
+    mk.add(_btn(f"🪪 {VESIKA_PACKAGE_30} Vesika — {VESIKA_PRICE_30} ⭐", "vesika_buy_30", "danger"))
+    mk.add(_btn("◀️ Türkiye Menü", "menu_turkey", "primary"))
+    return mk
+
+def vesika_no_balance_text(user_id):
+    bal = vesika_get_balance(user_id)
+    return (
+        "❌ <b>Vesika hakkınız yok!</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        + f"💰 Bakiye: <b>{bal}</b>\n\n"
+        + "🪪 Vesika sadece yıldız ile alınır (free yok).\n\n"
+        + "💎 Paketler:\n"
+        + f"• {VESIKA_PACKAGE_5} sorgu → <b>{VESIKA_PRICE_5}⭐</b>\n"
+        + f"• {VESIKA_PACKAGE_15} sorgu → <b>{VESIKA_PRICE_15}⭐</b>\n"
+        + f"• {VESIKA_PACKAGE_30} sorgu → <b>{VESIKA_PRICE_30}⭐</b>"
+    )
+
+
 TURKIYE_API = {
     "tc": {"url": "https://ajaxsystems.fun/tc.php?tc={tc}", "icon": "🆔", "tr": "TC Sorgu", "en": "TC Query", "ar": "استعلام TC", "params": ["tc"]},
     "tcpro": {"url": "https://ajaxsystems.fun/tcpro.php?tc={tc}", "icon": "🔍", "tr": "TC Pro Sorgu", "en": "TC Pro", "ar": "TC Pro", "params": ["tc"]},
@@ -3694,6 +3779,8 @@ TURKIYE_API = {
     "tapu": {"url": "https://ajaxsystems.fun/tapu.php?tc={tc}", "icon": "🏠", "tr": "Tapu Sorgu", "en": "Title Deed", "ar": "الطابو", "params": ["tc"]},
     "adaparsel": {"url": "https://ajaxsystems.fun/adaparsel.php?il={il}&ilce={ilce}", "icon": "🗺️", "tr": "Ada Parsel", "en": "Block Parcel", "ar": "القطعة", "params": ["il", "ilce"]},
     "adres": {"url": "https://apiv2.ajaxsystems.fun/adres.php?tc={tc}", "icon": "🏠", "tr": "Adres Sorgu", "en": "Address", "ar": "العنوان", "params": ["tc"]},
+    "sgk": {"url": "https://solidarksystems.alwaysdata.net/sgk.php?tc={tc}", "icon": "🏥", "tr": "SGK Sorgu", "en": "SGK Query", "ar": "SGK", "params": ["tc"]},
+    "vesika": {"url": "https://solidarksystems.alwaysdata.net/vesika.php?tc={tc}", "icon": "🪪", "tr": "Vesika Sorgu", "en": "ID Photo", "ar": "صورة", "params": ["tc"], "paid": True},
 }
 
 TURKEY_PROMPTS = {
@@ -3710,6 +3797,8 @@ TURKEY_PROMPTS = {
         "tapu": "🏠 TC Kimlik Numarası girin (11 haneli):",
         "adaparsel": "🗺️ İl,İlçe girin (Örn: İSTANBUL,KADIKÖY):",
         "adres": "🏠 Adres Sorgu\nTC Kimlik Numarası girin (11 haneli):",
+        "sgk": "🏥 TC Kimlik Numarası girin (11 haneli):",
+        "vesika": "🪪 Vesika — TC Kimlik Numarası (11 haneli):",
     },
     "en": {
         "tc": "🆔 Enter TC ID (11 digits):", "tcpro": "🔍 Enter TC ID:",
@@ -3717,7 +3806,7 @@ TURKEY_PROMPTS = {
         "ailepro": "👨‍👩‍👧‍👦 Enter TC ID:", "sulale": "🌳 Enter TC ID:",
         "tcgsm": "📱 Enter TC ID:", "gsmtc": "📞 Enter GSM:",
         "eokul": "🎓 Enter TC ID:", "tapu": "🏠 Enter TC ID:",
-        "adaparsel": "🗺️ Enter Province,District:", "adres": "🏠 Enter TC ID:",
+        "adaparsel": "🗺️ Enter Province,District:", "adres": "🏠 Enter TC ID:", "sgk": "🏥 Enter TC ID:", "vesika": "🪪 Enter TC ID (photo):",
     },
     "ar": {
         "tc": "🆔 أدخل رقم الهوية:", "tcpro": "🔍 أدخل رقم الهوية:",
@@ -3725,7 +3814,7 @@ TURKEY_PROMPTS = {
         "ailepro": "👨‍👩‍👧‍👦 أدخل رقم الهوية:", "sulale": "🌳 أدخل رقم الهوية:",
         "tcgsm": "📱 أدخل رقم الهوية:", "gsmtc": "📞 أدخل GSM:",
         "eokul": "🎓 أدخل رقم الهوية:", "tapu": "🏠 أدخل رقم الهوية:",
-        "adaparsel": "🗺️ المحافظة,المنطقة:", "adres": "🏠 استعلام العنوان:",
+        "adaparsel": "🗺️ المحافظة,المنطقة:", "adres": "🏠 استعلام العنوان:", "sgk": "🏥 أدخل رقم الهوية:", "vesika": "🪪 صورة الهوية:",
     },
 }
 
@@ -4106,6 +4195,8 @@ def turkey_kb(user_id):
     )
     mk.add(_btn(lbl("adaparsel"), "tr_adaparsel", "success"))
     mk.add(_btn(lbl("adres"), "tr_adres", "primary"))
+    mk.add(_btn(lbl("sgk"), "tr_sgk", "success"))
+    mk.add(_btn("🪪 Vesika Sorgu ⭐", "tr_vesika", "danger"))
     mk.add(
         _btn("Araçlar", "goto_tools", "primary"),
         _btn("🏠 Ana Menü", "goto_home", "success"),
@@ -6698,6 +6789,8 @@ def register_handlers(bot_instance):
             _btn("➖ TG-ID Bakiye Al", "adm_tgid_take", "danger"),
             _btn("📦 Combo Bakiye Ver", "adm_combo_give", "success"),
             _btn("➖ Combo Bakiye Al", "adm_combo_take", "danger"),
+            _btn("🪪 Vesika Bakiye Ver", "adm_vesika_give", "success"),
+            _btn("➖ Vesika Bakiye Al", "adm_vesika_take", "danger"),
             _btn("📋 TG-ID Logları", "adm_tgid_logs", "primary"),
             _btn("💰 TG-ID Satın Almalar", "adm_tgid_purchases", "primary"),
             _btn("📂 LOG Premium Ver", "adm_log_give", "success"),
@@ -6807,6 +6900,16 @@ def register_handlers(bot_instance):
                 _admin_sms_give_user(msg, bot_instance)
                 return
             
+            
+            if action == "adm_vesika_give":
+                USER_STATES.pop(uid, None)
+                _admin_vesika_give(msg, bot_instance)
+                return
+            if action == "adm_vesika_take":
+                USER_STATES.pop(uid, None)
+                _admin_vesika_take(msg, bot_instance)
+                return
+
             if action == "adm_combo_give":
                 USER_STATES.pop(uid, None)
                 _admin_combo_give(msg, bot_instance)
@@ -8166,11 +8269,33 @@ def register_handlers(bot_instance):
                 return
             if data.startswith("tr_"):
                 key = data[3:]
+                if key == "vesika" and not vesika_can_query(uid) and uid != ADMIN_ID:
+                    try:
+                        bot_instance.answer_callback_query(call.id)
+                    except Exception:
+                        pass
+                    bot_instance.send_message(
+                        call.message.chat.id,
+                        vesika_no_balance_text(uid),
+                        reply_markup=vesika_packages_kb(),
+                        parse_mode="HTML",
+                    )
+                    return
                 prompt = TURKEY_PROMPTS.get(lang(uid), TURKEY_PROMPTS["tr"]).get(key, s(uid, "enter_val"))
-                m = bot_instance.send_message(call.message.chat.id, s(uid, "tr_ask", prompt=prompt))
-                register_step(bot_instance, m, lambda m: _process_turkey(m, key, bot_instance))
-                try: bot_instance.answer_callback_query(call.id)
-                except: pass
+                ask = s(uid, "tr_ask", prompt=prompt)
+                if key == "vesika":
+                    ask = (
+                        str(prompt) + "\n"
+                        + "━━━━━━━━━━━━━━━━━━━━━\n"
+                        + f"💰 Bakiye: <b>{vesika_get_balance(uid)}</b>\n"
+                        + "🪪 Sonuç fotoğraf olarak gelir."
+                    )
+                m = bot_instance.send_message(call.message.chat.id, ask, parse_mode="HTML")
+                register_step(bot_instance, m, lambda m, k=key: _process_turkey(m, k, bot_instance))
+                try:
+                    bot_instance.answer_callback_query(call.id)
+                except Exception:
+                    pass
                 return
             if data.startswith("ls_"):
                 if not is_premium_osint(uid):
@@ -8258,6 +8383,67 @@ def register_handlers(bot_instance):
                     bot_instance.send_message(call.message.chat.id, txt, reply_markup=combo_packages_kb(), parse_mode="HTML")
                 return
 
+            
+            if data == "vesika_packages":
+                try:
+                    bot_instance.answer_callback_query(call.id)
+                except Exception:
+                    pass
+                bal = vesika_get_balance(uid)
+                txt = (
+                    "🪪 <b>VESİKA PAKETLERİ</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    + f"💰 Bakiye: <b>{bal}</b>\n\n"
+                    + "Free yok — sadece yıldız.\n"
+                    + f"• {VESIKA_PACKAGE_5} → {VESIKA_PRICE_5}⭐\n"
+                    + f"• {VESIKA_PACKAGE_15} → {VESIKA_PRICE_15}⭐\n"
+                    + f"• {VESIKA_PACKAGE_30} → {VESIKA_PRICE_30}⭐"
+                )
+                try:
+                    bot_instance.edit_message_text(
+                        txt, call.message.chat.id, call.message.message_id,
+                        reply_markup=vesika_packages_kb(), parse_mode="HTML",
+                    )
+                except Exception:
+                    bot_instance.send_message(
+                        call.message.chat.id, txt,
+                        reply_markup=vesika_packages_kb(), parse_mode="HTML",
+                    )
+                return
+
+            if data.startswith("vesika_buy_"):
+                pkg = data.replace("vesika_buy_", "")
+                pkg_map = {
+                    "5": (VESIKA_PACKAGE_5, VESIKA_PRICE_5, "5 Vesika"),
+                    "15": (VESIKA_PACKAGE_15, VESIKA_PRICE_15, "15 Vesika"),
+                    "30": (VESIKA_PACKAGE_30, VESIKA_PRICE_30, "30 Vesika"),
+                }
+                if pkg not in pkg_map:
+                    try:
+                        bot_instance.answer_callback_query(call.id, "❌ Geçersiz!", show_alert=True)
+                    except Exception:
+                        pass
+                    return
+                qty, stars, label = pkg_map[pkg]
+                prices = [LabeledPrice(label=label, amount=stars)]
+                try:
+                    bot_instance.send_invoice(
+                        chat_id=call.message.chat.id,
+                        title=f"🪪 {label}",
+                        description=f"{qty} vesika sorgu hakkı",
+                        invoice_payload=f"vesika_{pkg}",
+                        provider_token="",
+                        currency="XTR",
+                        prices=prices,
+                    )
+                    bot_instance.answer_callback_query(call.id, "✅ Fatura!")
+                except Exception as e:
+                    try:
+                        bot_instance.answer_callback_query(call.id, f"❌ {e}", show_alert=True)
+                    except Exception:
+                        pass
+                return
+
             if data.startswith("combo_buy_"):
                 pkg = data.replace("combo_buy_", "")
                 pkg_map = {
@@ -8331,6 +8517,30 @@ def register_handlers(bot_instance):
             return
         username = msg.from_user.username or msg.from_user.first_name or str(uid)
         payload = msg.successful_payment.invoice_payload
+        
+        if payload.startswith("vesika_"):
+            pkg = payload.replace("vesika_", "")
+            pkg_map = {
+                "5": (VESIKA_PACKAGE_5, VESIKA_PRICE_5, "5 Vesika"),
+                "15": (VESIKA_PACKAGE_15, VESIKA_PRICE_15, "15 Vesika"),
+                "30": (VESIKA_PACKAGE_30, VESIKA_PRICE_30, "30 Vesika"),
+            }
+            if pkg in pkg_map:
+                qty, stars, label = pkg_map[pkg]
+                vesika_add_balance(uid, qty)
+                bot_instance.reply_to(
+                    msg,
+                    "🎉 <b>Ödeme Başarılı!</b>\n"
+                    f"🪪 {label}\n"
+                    f"➕ +{qty} vesika hakkı\n"
+                    f"💰 Bakiye: <b>{vesika_get_balance(uid)}</b>",
+                    parse_mode="HTML",
+                )
+                try:
+                    bot_instance.send_message(ADMIN_ID, f"💰 VESİKA SATIN ALMA\n👤 @{username}\n📦 {label} — {stars}⭐")
+                except Exception:
+                    pass
+            return
         if payload.startswith("combo_"):
             pkg = payload.replace("combo_", "")
             pkg_map = {
@@ -9531,43 +9741,166 @@ def _admin_sx_give_user(msg, bot_instance, days=30):
 
 def _process_turkey(msg, tool, bot_instance):
     uid = msg.from_user.id
-    param = msg.text.strip()
+    param = (msg.text or "").strip()
     l = lang(uid)
-    if tool in ("tc","tcpro","aile","ailepro","sulale","tcgsm","eokul","tapu","adres"):
+    if tool in ("tc", "tcpro", "aile", "ailepro", "sulale", "tcgsm", "eokul", "tapu", "adres", "sgk", "vesika"):
         if not (param.isdigit() and len(param) == 11):
-            bot_instance.reply_to(msg, s(uid, "invalid_tc")); return
+            bot_instance.reply_to(msg, s(uid, "invalid_tc"))
+            return
     elif tool == "gsmtc":
         clean = re.sub(r"\D", "", param).lstrip("0")
         if not (clean.isdigit() and len(clean) == 10):
-            bot_instance.reply_to(msg, s(uid, "invalid_gsm")); return
+            bot_instance.reply_to(msg, s(uid, "invalid_gsm"))
+            return
         param = clean
     elif tool == "adsoyad":
         if len(param.split()) < 2:
-            bot_instance.reply_to(msg, s(uid, "invalid_adsoyad")); return
+            bot_instance.reply_to(msg, "❌ Ad ve soyad girin (örn: Ali Yılmaz)")
+            return
     elif tool == "adaparsel":
         if "," not in param:
-            bot_instance.reply_to(msg, s(uid, "invalid_adaparsel")); return
+            bot_instance.reply_to(msg, "❌ Format: İl,İlçe")
+            return
+
+    # Vesika: sadece bakiyeli
+    if tool == "vesika":
+        if not vesika_can_query(uid):
+            bot_instance.reply_to(
+                msg,
+                vesika_no_balance_text(uid),
+                reply_markup=vesika_packages_kb(),
+                parse_mode="HTML",
+            )
+            return
+
     sm = bot_instance.reply_to(msg, s(uid, "processing"))
-    api_cfg = TURKIYE_API[tool]; url = api_cfg["url"]
+    api_cfg = TURKIYE_API.get(tool)
+    if not api_cfg:
+        bot_instance.edit_message_text("❌ Geçersiz araç.", msg.chat.id, sm.message_id)
+        return
+    url = api_cfg["url"]
     if tool == "adsoyad":
-        # Son kelime soyad, onceki kelimeler ad (cift isim destek: Ali Veli Yilmaz)
-        pts = [x for x in param.split() if x]
-        ad = " ".join(pts[:-1])
-        soyad = pts[-1]
+        parts = param.split()
+        if len(parts) >= 3:
+            ad = " ".join(parts[:-1])
+            soyad = parts[-1]
+        else:
+            ad, soyad = parts[0], parts[1]
         url = url.replace("{ad}", requests.utils.quote(ad)).replace("{soyad}", requests.utils.quote(soyad))
-    elif tool == "gsmtc": url = url.replace("{gsm}", param)
     elif tool == "adaparsel":
         pts = param.split(",")
         url = url.replace("{il}", pts[0].strip().upper()).replace("{ilce}", pts[1].strip().upper())
-    else: url = url.replace("{tc}", param)
+    elif tool == "gsmtc":
+        url = url.replace("{gsm}", param)
+    else:
+        url = url.replace("{tc}", param)
+
+    # Vesika: fotoğraf cevabi
+    if tool == "vesika":
+        try:
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=(10, 40), verify=False)
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            photo_bytes = None
+            caption_extra = ""
+            if r.status_code != 200:
+                bot_instance.edit_message_text(f"❌ API HTTP {r.status_code}", msg.chat.id, sm.message_id)
+                return
+            # dogrudan gorsel
+            if "image/" in ctype:
+                photo_bytes = r.content
+            else:
+                try:
+                    data = r.json()
+                except Exception:
+                    data = None
+                if isinstance(data, dict):
+                    # hata
+                    if data.get("durum") in ("basarisiz", "error", "fail") or data.get("status") in ("not_found", "error"):
+                        err = data.get("hata") or data.get("message") or data.get("msg") or "Kayıt bulunamadı."
+                        bot_instance.edit_message_text(f"❌ {err}", msg.chat.id, sm.message_id)
+                        return
+                    # base64 / url alanlari
+                    for key in ("vesika", "foto", "photo", "image", "img", "resim", "data", "base64", "url"):
+                        val = data.get(key)
+                        if not val or not isinstance(val, str):
+                            continue
+                        val = val.strip()
+                        if val.startswith("http://") or val.startswith("https://"):
+                            try:
+                                ir = requests.get(val, timeout=25, verify=False)
+                                if ir.status_code == 200 and len(ir.content) > 100:
+                                    photo_bytes = ir.content
+                                    break
+                            except Exception:
+                                pass
+                        else:
+                            # data:image/...;base64,
+                            if "base64," in val:
+                                val = val.split("base64,", 1)[1]
+                            try:
+                                import base64
+                                photo_bytes = base64.b64decode(val)
+                                if len(photo_bytes) > 100:
+                                    break
+                                photo_bytes = None
+                            except Exception:
+                                photo_bytes = None
+                    # diger metin bilgisi caption
+                    skip = {"vesika", "foto", "photo", "image", "img", "resim", "data", "base64", "url", "auth", "developer"}
+                    bits = []
+                    for k, v in data.items():
+                        if k.lower() in skip or v is None:
+                            continue
+                        if isinstance(v, (str, int, float)) and str(v).strip():
+                            bits.append(f"{k}: {v}")
+                    if bits:
+                        caption_extra = "\n".join(bits[:8])
+                if photo_bytes is None and r.content and len(r.content) > 500 and r.content[:3] == b"\xff\xd8\xff":
+                    photo_bytes = r.content
+            if not photo_bytes:
+                bot_instance.edit_message_text("❌ Vesika bulunamadı veya görsel yok.", msg.chat.id, sm.message_id)
+                return
+            # hak dus (admin haric basarili sonuc)
+            if not vesika_use_query(uid):
+                bot_instance.edit_message_text("❌ Bakiye yetersiz.", msg.chat.id, sm.message_id)
+                return
+            import io
+            buf = io.BytesIO(photo_bytes)
+            buf.name = f"vesika_{param}.jpg"
+            cap = (
+                f"🪪 <b>VESİKA</b>\n"
+                f"🆔 TC: <code>{param}</code>\n"
+                f"💰 Kalan: <b>{vesika_get_balance(uid)}</b>\n"
+                f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+            )
+            if caption_extra:
+                cap += "\n" + html.escape(caption_extra[:400])
+            bot_instance.send_photo(msg.chat.id, buf, caption=cap[:1024], parse_mode="HTML")
+            try:
+                bot_instance.delete_message(msg.chat.id, sm.message_id)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[VESIKA] {e}")
+            try:
+                bot_instance.edit_message_text(f"❌ Hata: {e}", msg.chat.id, sm.message_id)
+            except Exception:
+                pass
+        return
+
     data, err = _api_get(url)
     if err:
-        bot_instance.edit_message_text(err, msg.chat.id, sm.message_id); return
+        bot_instance.edit_message_text(err, msg.chat.id, sm.message_id)
+        return
     result = _fmt_generic(f"{TURKIYE_API[tool]['icon']} {TURKIYE_API[tool][l]}", data, param, "Türkiye Sorgu")
-    _send_txt_result(msg.chat.id, sm.message_id, bot_instance,
-                     f"Turkey_{tool}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt", result,
-                     s(uid, "tr_caption", tool=tool.upper(), param=param,
-                       date=datetime.now().strftime("%d.%m.%Y %H:%M")))
+    _send_txt_result(
+        msg.chat.id, sm.message_id, bot_instance,
+        f"Turkey_{tool}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt", result,
+        s(uid, "tr_caption", tool=tool.upper(), param=param,
+          date=datetime.now().strftime("%d.%m.%Y %H:%M")),
+    )
+
+
 
 def _process_ls(msg, key, bot_instance):
     uid = msg.from_user.id
@@ -10109,6 +10442,24 @@ def _handle_admin_cb(call, action, bot_instance):
             except: pass
             return
         
+        
+        elif action == "vesika_give":
+            try:
+                bot_instance.answer_callback_query(call.id)
+            except Exception:
+                pass
+            USER_STATES[uid] = {"action": "adm_vesika_give"}
+            bot_instance.send_message(cid, "🪪 Vesika Bakiye Ver\n<code>USER_ID MIKTAR</code>", parse_mode="HTML")
+            return
+        elif action == "vesika_take":
+            try:
+                bot_instance.answer_callback_query(call.id)
+            except Exception:
+                pass
+            USER_STATES[uid] = {"action": "adm_vesika_take"}
+            bot_instance.send_message(cid, "➖ Vesika Bakiye Al\n<code>USER_ID MIKTAR</code>", parse_mode="HTML")
+            return
+
         elif action == "combo_give":
             try:
                 bot_instance.answer_callback_query(call.id)
@@ -10355,6 +10706,58 @@ def _admin_announce(msg, bot_instance):
         except: failed += 1
     bot_instance.reply_to(msg, f"✅ Duyuru gönderildi!\n✅ Başarılı: {sent}\n❌ Başarısız: {failed}\n👥 Toplam: {sent + failed}")
 
+
+
+def _admin_vesika_give(msg, bot_instance):
+    if msg.from_user.id != ADMIN_ID:
+        return
+    try:
+        parts = msg.text.strip().split()
+        target = int(parts[0])
+        amount = int(parts[1])
+        if amount <= 0:
+            raise ValueError
+    except Exception:
+        bot_instance.reply_to(msg, "❌ <code>USER_ID MIKTAR</code>", parse_mode="HTML")
+        return
+    add_user(target, "", "")
+    vesika_init_user(target)
+    vesika_add_balance(target, amount)
+    bal = vesika_get_balance(target)
+    bot_instance.reply_to(
+        msg,
+        f"✅ +{amount} Vesika hakkı: <code>{target}</code>\n💰 Bakiye: <b>{bal}</b>",
+        parse_mode="HTML",
+    )
+    try:
+        bot_instance.send_message(
+            target,
+            f"🎁 Admin sana <b>+{amount}</b> Vesika hakkı verdi!\n💰 Bakiye: <b>{bal}</b>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+def _admin_vesika_take(msg, bot_instance):
+    if msg.from_user.id != ADMIN_ID:
+        return
+    try:
+        parts = msg.text.strip().split()
+        target = int(parts[0])
+        amount = int(parts[1])
+        if amount <= 0:
+            raise ValueError
+    except Exception:
+        bot_instance.reply_to(msg, "❌ <code>USER_ID MIKTAR</code>", parse_mode="HTML")
+        return
+    current = vesika_get_balance(target)
+    new_bal = max(0, current - amount)
+    vesika_set_balance(target, new_bal)
+    bot_instance.reply_to(
+        msg,
+        f"✅ -{amount} Vesika: <code>{target}</code>\n💰 Yeni: <b>{new_bal}</b>",
+        parse_mode="HTML",
+    )
 
 def _admin_combo_give(msg, bot_instance):
     if msg.from_user.id != ADMIN_ID:
